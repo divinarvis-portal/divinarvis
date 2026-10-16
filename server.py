@@ -4,7 +4,98 @@ import pathlib, datetime, re, os
 
 app = Flask(__name__)
 BASE = pathlib.Path(__file__).parent
-UPLOAD_DIR = BASE / "uploads"
+UPLOAD_DIR = BASE / "uploads"import os
+from flask import Flask, request, jsonify, send_from_directory
+import yt_dlp
+from werkzeug.utils import secure_filename
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# --- COOKIES AUTO-DETECT ---
+def get_cookie_file():
+    for name in ["cookies.txt", "www.youtube.com_cookies.txt", "youtube.com_cookies.txt"]:
+        if os.path.exists(name):
+            print(f"✅ Found cookie file: {name}")
+            return name
+    print("⚠️ No cookie file found")
+    return None
+
+COOKIE_FILE = get_cookie_file()
+
+@app.route("/")
+def home():
+    return send_from_directory(".", "index.html")
+
+@app.route("/<path:path>")
+def serve_static(path):
+    if os.path.exists(path):
+        return send_from_directory(".", path)
+    return send_from_directory(".", "index.html")
+
+@app.route("/api/files")
+def list_files():
+    files = []
+    if os.path.exists(UPLOAD_FOLDER):
+        for f in os.listdir(UPLOAD_FOLDER):
+            if f.endswith(".mp3"):
+                files.append(f)
+    return jsonify(files)
+
+@app.route("/api/upload", methods=["POST"])
+def upload():
+    if "file" not in request.files:
+        return jsonify({"error": "No file"}), 400
+    file = request.files["file"]
+    filename = secure_filename(file.filename)
+    dest = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(dest)
+    print(f"[UPLOAD OK] {filename}")
+    return jsonify({"ok": True, "file": filename})
+
+@app.route("/api/youtube", methods=["POST"])
+def youtube_dl():
+    data = request.get_json() or {}
+    url = data.get("url") or request.form.get("url")
+    if not url:
+        return jsonify({"error": "No url"}), 400
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': os.path.join(UPLOAD_FOLDER, '%(title)s.%(ext)s'),
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web', 'ios']
+            }
+        },
+        'noplaylist': True,
+        'quiet': False,
+    }
+
+    cookie_file = get_cookie_file()
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            base = os.path.splitext(os.path.basename(ydl.prepare_filename(info)))[0]
+            mp3_name = base + ".mp3"
+            return jsonify({"ok": True, "file": mp3_name})
+    except Exception as e:
+        print(f"[YT ERROR] {e}")
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
 UPLOAD_DIR.mkdir(exist_ok=True)
 ( BASE / "assets").mkdir(exist_ok=True)
 
