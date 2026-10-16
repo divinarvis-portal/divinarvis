@@ -1,4 +1,4 @@
-# server.py V9.6 - RETRY MULTI-CLIENT - FIX DEFINITIF
+# server.py V9.8 - FINAL - yt-dlp 2025.10.14 - BYPASS SANS COOKIES
 from flask import Flask, request, jsonify, send_from_directory
 import pathlib, re, os
 import yt_dlp
@@ -9,19 +9,12 @@ UPLOAD_DIR = BASE / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 (BASE / "assets").mkdir(exist_ok=True)
 
-def get_cookie_file():
-    for name in ["cookies.txt", "www.youtube.com_cookies.txt"]:
-        p = BASE / name
-        if p.exists(): return str(p)
-        if os.path.exists(name): return name
-    return None
-
 last_sync = {"action":"init","ts":0}
 
 def clean_yt_url(url: str) -> str:
+    if not url: return ""
     url = url.strip()
-    url = re.sub(r'\?si=.*$', '', url)
-    m = re.search(r'(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})', url)
+    m = re.search(r'(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{11})', url)
     if m: return f"https://www.youtube.com/watch?v={m.group(1)}"
     return url
 
@@ -63,49 +56,46 @@ def upload():
     filename = re.sub(r'[^A-Za-z0-9._-]', '_', f.filename or "") or "iphone.m4a"
     path = UPLOAD_DIR / filename
     f.save(path)
+    print(f"[UPLOAD OK] {filename}")
     return jsonify({"ok":True,"file":filename,"url":f"/uploads/{filename}"})
 
 @app.route("/api/youtube", methods=["POST"])
 def youtube():
-    url = clean_yt_url((request.get_json() or {}).get("url") or "")
-    cookie_file = get_cookie_file()
+    data = request.get_json() or {}
+    raw_url = data.get("url") or ""
+    url = clean_yt_url(raw_url)
+    if not url:
+        return jsonify({"ok":False,"error":"Invalid URL"}),400
     
-    # On va essayer 3 configurations différentes
-    configs = []
-    if cookie_file:
-        configs.append(['web', 'tv'])
-        configs.append(['web'])
-        configs.append(['ios', 'web'])
-    else:
-        configs.append(['android', 'ios'])
-        configs.append(['web', 'android'])
-        configs.append(['tv'])
+    print(f"[YT] Download: {url}")
 
-    last_error = ""
-    for clients in configs:
-        print(f"[YT TRY] clients={clients} cookie={bool(cookie_file)}")
-        ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio/bestvideo*+bestaudio/best',
-            'outtmpl': str(UPLOAD_DIR / '%(title)s.%(ext)s'),
-            'noplaylist': True,
-            'quiet': False,
-            'nocheckcertificate': True,
-            'extractor_args': {'youtube': {'player_client': clients}},
-            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
-        }
-        if cookie_file:
-            ydl_opts['cookiefile'] = cookie_file
-            
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return jsonify({"ok":True,"title":info.get('title','audio')})
-        except Exception as e:
-            last_error = str(e)
-            print(f"[YT FAIL {clients}] {last_error[:200]}")
-            continue
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': str(UPLOAD_DIR / '%(title)s.%(ext)s'),
+        'noplaylist': True,
+        'quiet': False,
+        'nocheckcertificate': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'mweb', 'web']
+            }
+        },
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+    }
 
-    return jsonify({"ok":False,"error":last_error[:500]}), 500
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            title = info.get('title','audio')
+            print(f"[YT OK] {title}")
+            return jsonify({"ok":True,"title":title})
+    except Exception as e:
+        print(f"[YT ERROR] {e}")
+        return jsonify({"ok":False,"error":str(e)[:600]}),500
 
 if __name__=="__main__":
     port = int(os.environ.get("PORT", 8000))
