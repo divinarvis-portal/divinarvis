@@ -1,4 +1,4 @@
-# server.py V9.3 - FIX COOKIES + IPHONE UPLOAD - DIVINARVIS
+# server.py V9.4 - FIX COOKIES + FORMAT AUDIO - DIVINARVIS
 from flask import Flask, request, jsonify, send_from_directory
 import pathlib, datetime, re, os
 import yt_dlp
@@ -93,11 +93,12 @@ def youtube():
     url = clean_yt_url(raw_url)
     
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': str(UPLOAD_DIR / '%(title)s.%(ext)s'),
         'noplaylist': True,
         'quiet': False,
-        'extractor_args': {'youtube': {'player_client': ['android', 'web', 'ios']}},
+        'nocheckcertificate': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web', 'tv', 'mweb']}},
         'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
     }
     
