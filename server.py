@@ -1,4 +1,4 @@
-# server.py V9.4 - FIX COOKIES + FORMAT AUDIO - DIVINARVIS
+# server.py V9.5 - FIX COOKIES vs ANDROID CLIENT
 from flask import Flask, request, jsonify, send_from_directory
 import pathlib, datetime, re, os
 import yt_dlp
@@ -9,25 +9,14 @@ UPLOAD_DIR = BASE / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 (BASE / "assets").mkdir(exist_ok=True)
 
-# --- COOKIES AUTO-DETECT ---
 def get_cookie_file():
     for name in ["cookies.txt", "www.youtube.com_cookies.txt", "youtube.com_cookies.txt"]:
         p = BASE / name
-        if p.exists():
-            print(f"✅ Found cookie file: {p}")
-            return str(p)
-        if os.path.exists(name):
-            print(f"✅ Found cookie file: {name}")
-            return name
-    print("⚠️ No cookie file found")
+        if p.exists(): return str(p)
+        if os.path.exists(name): return name
     return None
 
 print(f"[INIT] Upload folder = {UPLOAD_DIR.resolve()}")
-RADIOS = [
-    {"name": "Capital London", "url": "https://media-ice.musicradio.com/CapitalMP3"},
-    {"name": "Capital XTRA", "url": "https://media-ice.musicradio.com/CapitalXTRANationalMP3"},
-]
-
 last_sync = {"action":"init","ts":0}
 
 def clean_yt_url(url: str) -> str:
@@ -64,24 +53,19 @@ def files():
 @app.route("/api/delete", methods=["POST"])
 def delete_file():
     name=(request.get_json() or {}).get("file")
-    try: 
-        (UPLOAD_DIR / name).unlink(missing_ok=True)
+    try: (UPLOAD_DIR / name).unlink(missing_ok=True)
     except Exception as e: print(f"[DELETE ERR] {e}")
     return jsonify({"ok":True})
 
 @app.route("/api/upload", methods=["POST"])
 def upload():
-    print(f"[UPLOAD] files={list(request.files.keys())}")
     f = request.files.get("file")
-    if not f:
-        return jsonify({"ok":False,"error":"no file field"}),400
-    filename = f.filename
-    filename = re.sub(r'[^A-Za-z0-9._-]', '_', filename)
+    if not f: return jsonify({"ok":False,"error":"no file field"}),400
+    filename = re.sub(r'[^A-Za-z0-9._-]', '_', f.filename or "")
     if not filename: filename = f"iphone_{datetime.datetime.now().strftime('%H%M%S')}.m4a"
     path = UPLOAD_DIR / filename
     try:
         f.save(path)
-        print(f"[UPLOAD OK] {path} - {path.stat().st_size} bytes")
         return jsonify({"ok":True,"file":filename,"url":f"/uploads/{filename}"})
     except Exception as e:
         return jsonify({"ok":False,"error":str(e)}),500
@@ -89,20 +73,29 @@ def upload():
 @app.route("/api/youtube", methods=["POST"])
 def youtube():
     data = request.get_json() or {}
-    raw_url = data.get("url") or ""
-    url = clean_yt_url(raw_url)
+    url = clean_yt_url(data.get("url") or "")
     
+    cookie_file = get_cookie_file()
+    
+    # SI on a des cookies -> on utilise QUE web (pas android)
+    # SI pas de cookies -> on utilise android/ios pour bypass
+    if cookie_file:
+        print(f"[YT] Using cookies + web client: {cookie_file}")
+        client_list = ['web']
+    else:
+        print("[YT] No cookies, using android/ios bypass")
+        client_list = ['android', 'ios']
+
     ydl_opts = {
-        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'format': 'bestaudio/best',
         'outtmpl': str(UPLOAD_DIR / '%(title)s.%(ext)s'),
         'noplaylist': True,
         'quiet': False,
         'nocheckcertificate': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web', 'tv', 'mweb']}},
+        'extractor_args': {'youtube': {'player_client': client_list}},
         'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
     }
     
-    cookie_file = get_cookie_file()
     if cookie_file:
         ydl_opts['cookiefile'] = cookie_file
 
@@ -113,7 +106,7 @@ def youtube():
             return jsonify({"ok":True,"title":title})
     except Exception as e:
         print(f"[YT ERROR] {e}")
-        return jsonify({"ok":False,"error":str(e)[:400]}), 500
+        return jsonify({"ok":False,"error":str(e)[:500]}), 500
 
 if __name__=="__main__":
     port = int(os.environ.get("PORT", 8000))
